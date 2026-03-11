@@ -1,0 +1,54 @@
+# .remoterc - Remote Access Configuration
+# Source this file in your shell: source .remoterc
+# Or add to ~/.bashrc: source /path/to/.remoterc
+
+# ============================================
+# Remote Host Definitions
+# ============================================
+# Format: RC_HOST_<name>="user@hostname:port"
+
+RC_HOST_DEV="deploy@dev.example.com:22"
+RC_HOST_STAGING="deploy@staging.example.com:22"
+RC_HOST_PROD="deploy@prod.example.com:22"
+
+# ============================================
+# SSH Settings
+# ============================================
+
+RC_SSH_KEY="${HOME}/.ssh/id_ed25519"
+RC_SSH_OPTS="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=60"
+RC_SSH_AGENT_AUTOSTART=true
+
+# ============================================
+# Connection Defaults
+# ============================================
+
+RC_DEFAULT_USER="deploy"
+RC_DEFAULT_PORT=22
+RC_RETRY_COUNT=3
+RC_RETRY_DELAY=2
+
+# ============================================
+# Tunneling / Port Forwarding
+# ============================================
+# Format: RC_TUNNEL_<name>="local_port:remote_host:remote_port"
+
+RC_TUNNEL_DB="5433:localhost:5432"
+RC_TUNNEL_REDIS="6380:localhost:6379"
+RC_TUNNEL_WEB="8080:localhost:80"
+
+# ============================================
+# Sync Settings (rsync/scp)
+# ============================================
+
+RC_SYNC_EXCLUDE=".git node_modules __pycache__ .env"
+RC_SYNC_OPTS="-avz --progress"
+RC_SYNC_DRY_RUN=false
+
+# ============================================
+# Logging
+# ============================================
+
+RC_LOG_DIR="${HOME}/.remoterc/logs"
+RC_LOG_CONNECTIONS=true
+RC_LOG_RETENTION_DAYS=30
