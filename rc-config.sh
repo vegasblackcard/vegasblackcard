@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # rc-config.sh - Remote access configuration manager
 # Usage: source rc-config.sh && rc <command> [args]
-
-set -euo pipefail
+#
+# NOTE: This file is meant to be sourced into an interactive shell, so it does
+# NOT enable `set -euo pipefail`. Shell options set here are not function-scoped
+# in bash, so enabling `-e`/`-u` would leak into the user's session and a single
+# failed command (e.g. an unset host) could terminate their shell. Error
+# handling is instead done explicitly via `${var:?msg}` guards and `return 1`.
 
 RC_CONFIG_FILE="${RC_CONFIG_FILE:-.remoterc}"
 RC_VERSION="1.0.0"
@@ -28,13 +32,25 @@ _rc_agent() {
     fi
 }
 
-# Parse host definition "user@host:port"
+# Parse host definition "user@host[:port]"
+# Falls back to RC_DEFAULT_USER / RC_DEFAULT_PORT when a part is omitted.
 _rc_parse_host() {
     local def="$1"
-    RC_PARSED_USER="${def%%@*}"
-    local rest="${def#*@}"
-    RC_PARSED_HOST="${rest%%:*}"
-    RC_PARSED_PORT="${rest##*:}"
+
+    if [[ "$def" == *"@"* ]]; then
+        RC_PARSED_USER="${def%%@*}"
+        def="${def#*@}"
+    else
+        RC_PARSED_USER="${RC_DEFAULT_USER:-$USER}"
+    fi
+
+    if [[ "$def" == *":"* ]]; then
+        RC_PARSED_HOST="${def%%:*}"
+        RC_PARSED_PORT="${def##*:}"
+    else
+        RC_PARSED_HOST="$def"
+        RC_PARSED_PORT="${RC_DEFAULT_PORT:-22}"
+    fi
 }
 
 # Connect to a named remote host
