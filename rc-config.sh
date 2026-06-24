@@ -9,7 +9,7 @@
 # handling is instead done explicitly via `${var:?msg}` guards and `return 1`.
 
 RC_CONFIG_FILE="${RC_CONFIG_FILE:-.remoterc}"
-RC_VERSION="1.0.0"
+RC_VERSION="1.1.0"
 
 # Load config
 _rc_load() {
@@ -67,13 +67,19 @@ _rc_connect() {
     _rc_parse_host "$host_def"
     _rc_agent
 
-    local attempt=0
+    local attempt=0 ssh_exit=0
     while (( attempt < ${RC_RETRY_COUNT:-3} )); do
         echo "Connecting to $name ($RC_PARSED_USER@$RC_PARSED_HOST:$RC_PARSED_PORT)..."
-        if ssh ${RC_SSH_OPTS:-} -p "$RC_PARSED_PORT" -i "${RC_SSH_KEY:-$HOME/.ssh/id_ed25519}" \
-            "$RC_PARSED_USER@$RC_PARSED_HOST" "${@:2}"; then
-            return 0
+        ssh ${RC_SSH_OPTS:-} -p "$RC_PARSED_PORT" -i "${RC_SSH_KEY:-$HOME/.ssh/id_ed25519}" \
+            "$RC_PARSED_USER@$RC_PARSED_HOST" "${@:2}"
+        ssh_exit=$?
+
+        # Exit 0 = success. Any non-255 code is the remote command's own exit
+        # status (the connection worked), so don't retry that either.
+        if (( ssh_exit != 255 )); then
+            return "$ssh_exit"
         fi
+
         attempt=$((attempt + 1))
         if (( attempt < ${RC_RETRY_COUNT:-3} )); then
             echo "Connection failed. Retrying in ${RC_RETRY_DELAY:-2}s... (attempt $((attempt+1))/${RC_RETRY_COUNT:-3})"
@@ -186,22 +192,53 @@ _rc_log() {
     fi
 }
 
-# Main entry point
-rc() {
-    _rc_load || return 1
+# Validate the config file and environment without connecting anywhere
+_rc_check() {
+    local problems=0
 
-    local cmd="${1:-help}"
-    shift 2>/dev/null || true
+    if [[ ! -f "$RC_CONFIG_FILE" ]]; then
+        echo "FAIL: config file '$RC_CONFIG_FILE' not found." >&2
+        return 1
+    fi
+    echo "OK: config file '$RC_CONFIG_FILE' found."
 
-    case "$cmd" in
-        connect|c)  _rc_log "connect $*"; _rc_connect "$@" ;;
-        tunnel|t)   _rc_log "tunnel $*"; _rc_tunnel "$@" ;;
-        sync|s)     _rc_log "sync $*"; _rc_sync "$@" ;;
-        hosts|h)    _rc_hosts ;;
-        tunnels)    _rc_tunnels ;;
-        version|v)  echo "rc-config v$RC_VERSION" ;;
-        help|*)
-            cat <<'HELP'
+    local key="${RC_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+    if [[ -f "$key" ]]; then
+        echo "OK: SSH key '$key' present."
+    else
+        echo "WARN: SSH key '$key' not found."
+        problems=$((problems + 1))
+    fi
+
+    local found_host=0
+    while IFS= read -r line; do
+        found_host=1
+        local name="${line#RC_HOST_}"; name="${name%%=*}"
+        local value="${line#*=}"; value="${value//\"/}"
+        if [[ "$value" == *"@"*  ]]; then
+            echo "OK: host '$(echo "$name" | tr '[:upper:]' '[:lower:]')' = $value"
+        else
+            echo "WARN: host '$name' = '$value' has no user@ part (will use RC_DEFAULT_USER)."
+            problems=$((problems + 1))
+        fi
+    done < <(grep -E '^RC_HOST_' "$RC_CONFIG_FILE" | grep -v '^#')
+
+    if (( found_host == 0 )); then
+        echo "WARN: no RC_HOST_* entries defined."
+        problems=$((problems + 1))
+    fi
+
+    if (( problems == 0 )); then
+        echo "Config check passed."
+        return 0
+    fi
+    echo "Config check finished with $problems warning(s)."
+    return 1
+}
+
+# Print usage
+_rc_help() {
+    cat <<'HELP'
 rc - Remote access configuration manager
 
 Commands:
@@ -210,7 +247,9 @@ Commands:
   sync,    s  <host> <local> <remote>     Rsync files to a remote host
   hosts,   h                              List configured hosts
   tunnels                                 List configured tunnels
+  check                                   Validate config file, SSH key, and hosts
   version, v                              Show version
+  help                                    Show this help
 
 Configuration:
   Edit .remoterc to define hosts, tunnels, and settings.
@@ -220,7 +259,31 @@ Examples:
   rc connect dev "ls -la"       # Run a command on dev
   rc tunnel db dev               # Forward local:5433 -> dev:5432
   rc sync staging ./app /opt/app # Rsync ./app to staging:/opt/app
+  rc check                       # Sanity-check your .remoterc
 HELP
-            ;;
+}
+
+# Main entry point
+rc() {
+    local cmd="${1:-help}"
+    shift 2>/dev/null || true
+
+    # These commands must work even without a config file present.
+    case "$cmd" in
+        version|v)  echo "rc-config v$RC_VERSION"; return 0 ;;
+        help|-h|--help) _rc_help; return 0 ;;
+        check)      _rc_check; return $? ;;
+    esac
+
+    # Everything below needs the config loaded.
+    _rc_load || return 1
+
+    case "$cmd" in
+        connect|c)  _rc_log "connect $*"; _rc_connect "$@" ;;
+        tunnel|t)   _rc_log "tunnel $*"; _rc_tunnel "$@" ;;
+        sync|s)     _rc_log "sync $*"; _rc_sync "$@" ;;
+        hosts|h)    _rc_hosts ;;
+        tunnels)    _rc_tunnels ;;
+        *)          echo "Unknown command: $cmd" >&2; _rc_help; return 1 ;;
     esac
 }
